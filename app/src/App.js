@@ -3,13 +3,13 @@ import {
   PublicKey, 
   Connection, 
   clusterApiUrl,
-  Keypair
+  LAMPORTS_PER_SOL
 } from "@solana/web3.js";
 import "./styles.css";
 import { PhantomWalletAdapter } from '@solana/wallet-adapter-wallets';  // THIS CAUSES "CRYPTO" MODULE ERROR UNLESS RESOLVED
 import { useWallet, WalletProvider, ConnectionProvider } from '@solana/wallet-adapter-react';
 import { WalletModalProvider, WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { encodeURL, parseURL, createTransfer, createQR } from "@solana/pay";
+import { encodeURL, parseURL, createTransfer, createQR, findReference, FindReferenceError, validateTransfer } from "@solana/pay";
 // import { QRCodeStyling} from "qr-code-styling";
 import BigNumber from "bignumber.js";
 require('@solana/wallet-adapter-react-ui/styles.css');
@@ -20,11 +20,12 @@ const wallets = [
 ]
 
 /* REPLACE THIS SENDER ADDRESS WITH YOUR WALLET ADDRESS FROM WHERE YOU WANT TO INITIATE A TRANSFER */
-const sender_wallet_ad = "HZpyGMxawAZy8ENvRtTsdQiwDGeBMtU2Dx1P9DFdRdvu";  // spl-wallet-1 of my Phantom
-const mercent_wallet_ad = "DqesRRc5fmXcG21HcgeWBsxryJmdYcerE8YzYHHJgoz1";
+// const sender_wallet_ad = "HZpyGMxawAZy8ENvRtTsdQiwDGeBMtU2Dx1P9DFdRdvu";  // spl-wallet-1
+const sender_wallet_ad = "3qupQgH5RaigtFNV7acr7Y9xvcc91F71VCf1szPH1Xej"; // wallet 3
+const mercent_wallet_ad = "DqesRRc5fmXcG21HcgeWBsxryJmdYcerE8YzYHHJgoz1";  // wallet 4 escrow
 const token_mint_ad = "2iB2oZaJZZBCmMecrz79wrMdu6Zn5UA2apUYdVy4jJUD";
 const opts = {
-  preflightCommitment: "processed"
+  preflightCommitment: "finalized"
 }
 const network = clusterApiUrl('devnet');
 
@@ -46,17 +47,35 @@ async function solPay() {
    */
   const network = clusterApiUrl('devnet');
   const connection = new Connection(network, opts.preflightCommitment);
-  
+
   /**
    * Gather customer checkout info's for url creation
    */
-   const recipient = new PublicKey(mercent_wallet_ad);
-   const amount = new BigNumber(2);
-   const splToken = new PublicKey(token_mint_ad);
-   const reference = new PublicKey(sender_wallet_ad);
-   const label = 'Niten Daju Store';
-   const message = 'Niten Daju Store - Nick Shoes - #001234';
-   const memo = 'JC#4098';
+  const recipient = new PublicKey(mercent_wallet_ad);
+  const amount = new BigNumber(5);
+  // const amount = new BigNumber(1);
+  // amount = amount.times(LAMPORTS_PER_SOL).integerValue(BigNumber.ROUND_FLOOR);
+  console.log("LPS:", LAMPORTS_PER_SOL)
+  console.log("amount decimal:", amount.decimalPlaces())
+  console.log(amount.decimalPlaces() ?? 0)
+  console.log("check bool:", amount.decimalPlaces() ?? 0 > 9)
+  if ((amount.decimalPlaces() ?? 0) > 9) throw console.log('amount decimals invalid');
+  // if (100) throw console.log('amount decimals invalid');
+  if ((amount.decimalPlaces() ?? 0) > 9){
+    console.log("PASYOOOO")
+  }
+  else{
+    console.log("PASENAAAA")
+  }
+  console.log('amt:', amount)
+  // const amount = new BigNumber(String(0.000000001));
+  // amount = amount.times(LAMPORTS_PER_SOL).integerValue(BigNumber.ROUND_FLOOR);
+  //  const amount = new BigNumber(0.02);
+  const splToken = new PublicKey(token_mint_ad);
+  const reference = new PublicKey(sender_wallet_ad);
+  const label = 'Nick Store';
+  const message = 'Nick Store - Nike Shoes - #001234';
+  const memo = 'JC#4098';
 
   /**
    * Create a payment request link for native SOL transfer
@@ -69,6 +88,7 @@ async function solPay() {
 
   // Transfer req URL scheme 
   // const url =
+  // 'solana:DqesRRc5fmXcG21HcgeWBsxryJmdYcerE8YzYHHJgoz1?amount=0.05&label=Michael&message=Thanks%20for%20all%20the%20fish&memo=OrderId12345'
     // 'solana:3qupQgH5RaigtFNV7acr7Y9xvcc91F71VCf1szPH1Xej?amount=1&reference=DqesRRc5fmXcG21HcgeWBsxryJmdYcerE8YzYHHJgoz1&label=Michael&message=Thanks%20for%20all%20the%20fish&memo=OrderId5678';
 
   console.log("url:", url)
@@ -129,14 +149,51 @@ console.log("payer:", payer)
 const tx = await createTransfer(connection, payer, { recipient, amount, splToken, reference, memo });  // For Spl Token
 console.log("tx:", tx)
 
+try{
+  const signed = await window.solana.signTransaction(tx);
+  const signature = await connection.sendRawTransaction(signed.serialize());
+  console.log("signature:", signature)
+  const latestBlockHash = await connection.getLatestBlockhash();
+  await connection.confirmTransaction(
+    {
+      blockhash: latestBlockHash.blockhash,
+      lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+      signature: signature,
+    }
+  )
+  // TRANSACTION VALIDATION PART
+  console.log('\nValidate transaction \n');
+  try {
+      await validateTransfer(connection, signature, { recipient, amount, splToken, reference, memo });
+  
+      // Update payment status
+      //  paymentStatus = 'validated';
+      console.log('✅ Payment validated');
+      console.log('📦 Ship order to customer');
+  } catch (error) {
+      console.error('❌ Payment failed', error);
+  }
+} catch (error) {
+  console.error('❌ Transaction Cancelled', error);
+}
+
+
 /**
  * Sign the transaction and send it to the blockchain and then wait for the confirmation
  */
-const signed = await window.solana.signTransaction(tx);
-const signature = await connection.sendRawTransaction(signed.serialize());
-console.log("signature:", signature)
-const finality = "confirmed";
-await connection.confirmTransaction(signature, finality);
+// const signed = await window.solana.signTransaction(tx);
+// const signature = await connection.sendRawTransaction(signed.serialize());
+// console.log("signature:", signature)
+// const latestBlockHash = await connection.getLatestBlockhash();
+// const finality = "finalized";
+// // await connection.confirmTransaction(signature, finality);
+// await connection.confirmTransaction(
+//   {
+//     blockhash: latestBlockHash.blockhash,
+//     lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+//     signature: signature,
+//   }
+// )
 
 }
 
